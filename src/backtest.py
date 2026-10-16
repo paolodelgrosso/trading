@@ -28,6 +28,7 @@ ALIQUOTA = 0.26
 UNIVERSI = {"italia": "universo.csv", "usa": "universo_usa.csv"}
 BENCHMARK = "FTSEMIB.MI"  # impostato in main(): è la prima riga del CSV dell'universo
 UNIVERSO_TICKER: list[str] = []
+STRATEGIE = ("A", "B", "C", "M")
 MOMENTUM_GG = 126  # solo per ordinare i segnali concorrenti, non filtra nulla
 
 
@@ -49,17 +50,44 @@ def matrici():
     return adj, chiu, aper, adj_netto, div
 
 
+MAX_GIORNI = {"M": 10}  # uscita a tempo (sedute di borsa) per la mean reversion
+ETICHETTE = {
+    "A": "A: sopra SMA200",
+    "B": "B: breakout 50/20",
+    "C": "C: A + filtro mercato",
+    "M": "M: mean reversion",
+}
+
+
 def segnali_strategia(nome: str, adj: pd.DataFrame):
-    """Ritorna (entra, esci) booleani per data/ticker, valutati sulla chiusura."""
-    if nome == "A":
+    """Ritorna (entra, esci, rank): booleani per data/ticker valutati sulla chiusura e
+    la priorità tra segnali concorrenti (più alto = prima)."""
+    rank = adj.pct_change(MOMENTUM_GG)
+    if nome in ("A", "C"):
         sma = adj.rolling(200).mean()
         valido = sma.notna()
         sopra = (adj > sma) & valido
-        return sopra, ~sopra & valido
+        entra, esci = sopra, ~sopra & valido
+        if nome == "C":
+            # filtro di mercato: indice benchmark sopra la sua SMA200
+            bm = adj[BENCHMARK]
+            bm_sma = bm.rolling(200).mean()
+            ok = ((bm > bm_sma) & bm_sma.notna()).to_numpy()[:, None]
+            bm_valido = bm_sma.notna().to_numpy()[:, None]
+            entra = pd.DataFrame(entra.to_numpy() & ok, index=adj.index, columns=adj.columns)
+            esci = pd.DataFrame(esci.to_numpy() | (~ok & bm_valido), index=adj.index, columns=adj.columns)
+        return entra, esci, rank
     if nome == "B":
         mass = adj.rolling(50).max().shift(1)
         minimo = adj.rolling(20).min().shift(1)
-        return (adj > mass) & mass.notna(), (adj < minimo) & minimo.notna()
+        return (adj > mass) & mass.notna(), (adj < minimo) & minimo.notna(), rank
+    if nome == "M":
+        sma200 = adj.rolling(200).mean()
+        sma5 = adj.rolling(5).mean()
+        ret3 = adj.pct_change(3)
+        entra = (ret3 <= -0.05) & (adj > sma200) & sma200.notna()
+        esci = ((adj > sma5) | (adj < sma200)) & sma200.notna()
+        return entra, esci, -ret3  # prima il titolo più "ipervenduto"
     raise ValueError(nome)
 
 
@@ -91,8 +119,7 @@ class Fisco:
 
 
 def simula(nome, adj, chiu, aper, div):
-    entra, esci = segnali_strategia(nome, adj)
-    mom = adj.pct_change(MOMENTUM_GG)
+    entra, esci, mom = segnali_strategia(nome, adj)
     date = adj.index
     cols = np.array(adj.columns)
     ent_np, mom_np = entra.to_numpy(), mom.to_numpy()
@@ -164,7 +191,7 @@ def simula(nome, adj, chiu, aper, div):
             costo = azioni * prezzo + COMMISSIONE
             cash -= costo
             tot_comm += COMMISSIONE
-            pos[t] = dict(azioni=azioni, costo=costo, data=d)
+            pos[t] = dict(azioni=azioni, costo=costo, data=d, i=i)
         # 3. valorizzazione alla chiusura
         for t in list(pos):
             c = chiu.at[d, t]
@@ -180,7 +207,8 @@ def simula(nome, adj, chiu, aper, div):
         ordini_riduci = [t for t, p in pos.items() if p["azioni"] * chiusure_ult[t] > PESO_MAX * eq]
         peso_max_visto = max(peso_max_visto, max((p["azioni"] * chiusure_ult[t] / eq for t, p in pos.items()), default=0.0))
         # 4. segnali di stasera -> ordini di domani
-        ordini_vendi = [t for t in pos if esci.at[d, t]]
+        ordini_vendi = [t for t in pos if esci.at[d, t]
+                        or (nome in MAX_GIORNI and i - pos[t]["i"] >= MAX_GIORNI[nome])]
         ok = np.flatnonzero(ent_np[i] & non_bench & ~np.isnan(mom_np[i]))
         ok = ok[np.argsort(-mom_np[i][ok])]
         ordini_compra = [cols[j] for j in ok if cols[j] not in pos]
@@ -251,7 +279,7 @@ def main():
           f"({len(tickers_azioni)} titoli, universo = composizione attuale)\n")
 
     risultati = {}
-    for nome in ("A", "B"):
+    for nome in STRATEGIE:
         r = simula(nome, adj_full, chiu_full, aper_full, div)
         r["equity"] = r["equity"].loc[inizio:]
         r["esposizione"] = r["esposizione"].loc[inizio:]
@@ -263,8 +291,7 @@ def main():
     fin_idx = eq_idx.iloc[-1] - max(0.0, eq_idx.iloc[-1] - CAPITALE) * ALIQUOTA
 
     righe = {
-        "A: sopra SMA200": metriche(risultati["A"]["equity"], risultati["A"]["finale_netto"]),
-        "B: breakout 50/20": metriche(risultati["B"]["equity"], risultati["B"]["finale_netto"]),
+        **{ETICHETTE[n]: metriche(risultati[n]["equity"], risultati[n]["finale_netto"]) for n in STRATEGIE},
         f"B&H equal-weight ({n_bh} titoli)": metriche(eq_bh, fin_bh),
         f"{BENCHMARK} (solo prezzo, no div.)": metriche(eq_idx, fin_idx),
     }
@@ -274,7 +301,7 @@ def main():
     print(tab.to_string())
 
     print("\nDettaglio strategie")
-    for n in ("A", "B"):
+    for n in STRATEGIE:
         r = risultati[n]
         op = r["operazioni"]
         print(f"  {n}: operazioni chiuse {len(op)} (+{r['aperte']} aperte), "
@@ -294,10 +321,10 @@ def main():
 
     out = ROOT / "risultati" / mercato
     out.mkdir(parents=True, exist_ok=True)
-    curve = pd.DataFrame({"A": risultati["A"]["equity"], "B": risultati["B"]["equity"],
-                          "BH_EW": eq_bh, "FTSEMIB": eq_idx.loc[inizio:]})
+    curve = pd.DataFrame({**{n: risultati[n]["equity"] for n in STRATEGIE},
+                          "BH_EW": eq_bh, "BENCHMARK": eq_idx.loc[inizio:]})
     curve.to_csv(out / "curve_equity.csv", float_format="%.2f")
-    for n in ("A", "B"):
+    for n in STRATEGIE:
         risultati[n]["operazioni"].to_csv(out / f"operazioni_{n}.csv", index=False, float_format="%.4f")
     print(f"\nCurve e operazioni salvate in {out}")
 
