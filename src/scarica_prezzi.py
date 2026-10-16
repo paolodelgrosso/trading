@@ -22,16 +22,17 @@ COLONNE = {
 }
 
 
-def leggi_universo() -> dict[str, str]:
-    """ticker -> div_valuta; la colonna è opzionale (vuota = dividendi già in EUR)."""
-    with open(UNIVERSO, newline="", encoding="utf-8-sig") as f:
+def leggi_universo(path=UNIVERSO) -> dict[str, str]:
+    """ticker -> div_valuta; la colonna è opzionale (vuota = dividendi già nella valuta
+    di quotazione). La prima riga è il benchmark."""
+    with open(path, newline="", encoding="utf-8-sig") as f:
         return {
             r["ticker"].strip(): (r.get("div_valuta") or "").strip()
             for r in csv.DictReader(f) if r["ticker"].strip()
         }
 
 
-def scarica(ticker: str) -> pd.DataFrame:
+def scarica(ticker: str, ora_chiusura: int = ORA_CHIUSURA_DATI) -> pd.DataFrame:
     df = yf.download(
         ticker, period="max", interval="1d",
         auto_adjust=False, actions=False, progress=False,
@@ -57,7 +58,7 @@ def scarica(ticker: str) -> pd.DataFrame:
 
     # Prima delle 18 la barra di oggi è parziale (borsa chiusa alle 17:30): scartala.
     adesso = datetime.now()
-    if adesso.hour < ORA_CHIUSURA_DATI:
+    if adesso.hour < ora_chiusura:
         df = df[df.index != adesso.strftime("%Y-%m-%d")]
 
     df["volume"] = df["volume"].fillna(0).astype("int64")
@@ -150,15 +151,24 @@ def salva(conn, ticker: str, df: pd.DataFrame, div: pd.Series) -> None:
 
 
 def main() -> None:
-    config = leggi_universo()
-    tickers = sys.argv[1:] or list(config)
+    # uso: scarica_prezzi.py [--universo FILE.csv] [--ora N] [TICKER ...]
+    args = sys.argv[1:]
+    universo, ora = UNIVERSO, ORA_CHIUSURA_DATI
+    while args and args[0] in ("--universo", "--ora"):
+        if args[0] == "--universo":
+            universo = ROOT / args[1]
+        else:
+            ora = int(args[1])
+        args = args[2:]
+    config = leggi_universo(universo)
+    tickers = args or list(config)
     conn = connetti()
     errori = []
     n = len(tickers)
 
     for i, t in enumerate(tickers, 1):
         try:
-            df = scarica(t)
+            df = scarica(t, ora)
             if df.empty:
                 errori.append((t, "nessun dato"))
                 print(f"[{i}/{n}] {t:12} NESSUN DATO")
