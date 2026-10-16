@@ -50,6 +50,7 @@ def matrici():
     return adj, chiu, aper, adj_netto, div
 
 
+PARAMETRI = {"sma": 200, "calo": 0.05}  # modificabili dal test di robustezza
 MAX_GIORNI = {"M": 10}  # uscita a tempo (sedute di borsa) per la mean reversion
 ETICHETTE = {
     "A": "A: sopra SMA200",
@@ -64,14 +65,14 @@ def segnali_strategia(nome: str, adj: pd.DataFrame):
     la priorità tra segnali concorrenti (più alto = prima)."""
     rank = adj.pct_change(MOMENTUM_GG)
     if nome in ("A", "C"):
-        sma = adj.rolling(200).mean()
+        sma = adj.rolling(PARAMETRI["sma"]).mean()
         valido = sma.notna()
         sopra = (adj > sma) & valido
         entra, esci = sopra, ~sopra & valido
         if nome == "C":
             # filtro di mercato: indice benchmark sopra la sua SMA200
             bm = adj[BENCHMARK]
-            bm_sma = bm.rolling(200).mean()
+            bm_sma = bm.rolling(PARAMETRI["sma"]).mean()
             ok = ((bm > bm_sma) & bm_sma.notna()).to_numpy()[:, None]
             bm_valido = bm_sma.notna().to_numpy()[:, None]
             entra = pd.DataFrame(entra.to_numpy() & ok, index=adj.index, columns=adj.columns)
@@ -85,7 +86,7 @@ def segnali_strategia(nome: str, adj: pd.DataFrame):
         sma200 = adj.rolling(200).mean()
         sma5 = adj.rolling(5).mean()
         ret3 = adj.pct_change(3)
-        entra = (ret3 <= -0.05) & (adj > sma200) & sma200.notna()
+        entra = (ret3 <= -PARAMETRI["calo"]) & (adj > sma200) & sma200.notna()
         esci = ((adj > sma5) | (adj < sma200)) & sma200.notna()
         return entra, esci, -ret3  # prima il titolo più "ipervenduto"
     raise ValueError(nome)
