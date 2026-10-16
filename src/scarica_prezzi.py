@@ -67,7 +67,7 @@ def scarica(ticker: str) -> pd.DataFrame:
 def _dividendi_yahoo(ticker: str) -> pd.Series:
     div = yf.Ticker(ticker).dividends
     if div is None or div.empty:
-        return pd.Series(dtype="float64")
+        return pd.Series(dtype="float64", index=pd.DatetimeIndex([]))
     idx = pd.to_datetime(div.index)
     if idx.tz is not None:
         idx = idx.tz_localize(None)

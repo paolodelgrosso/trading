@@ -29,6 +29,7 @@
   - `src/scarica_prezzi.py` — riscarica lo storico completo per ticker perché `adj_close` cambia all'indietro
   - `src/verifica.py` — controlli di qualità sui dati
   - `src/adjust.py` — `carica_prezzi()`: prezzi dal 2002-01-01 con `chiusura_adj` ricalcolata da `chiusura` + tabella `dividendi` (la colonna Yahoo diventa `chiusura_adj_yahoo`). Il backtest deve leggere SEMPRE da qui, non da `prezzi_giornalieri` direttamente.
+  - `src/aggiorna_sera.py` — scarico + verifica con log in `logs/scarico_AAAA-MM.log` (escluso da git); salta il weekend, exit 1 se ci sono errori. Pianificato in Task Scheduler come `Trading-ScaricoSerale`, lun-ven 18:30 (utente connesso, `StartWhenAvailable`). Non gestisce le festività di borsa (riscarica senza novità). Nessuna notifica: controllare il log.
   - `src/confronta_adj.py` — confronto adj nostra vs Yahoo
   - `universo.csv` — ticker Yahoo `.MI` + `FTSEMIB.MI` come benchmark
 - Dati pre-2002 inutilizzabili: Yahoo applica dividendi in lire a prezzi in euro e la sua `chiusura_adj` va a zero/negativa (DB invariato, filtro in lettura, `DATA_INIZIO_BACKTEST` in `db.py`).
