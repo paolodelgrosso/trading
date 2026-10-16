@@ -39,7 +39,7 @@
 ## Git
 - Identità locale: paolodelgrosso <paolo.delgrosso@gmail.com>.
   La globale è quella lavorativa: non toccarla.
-- Nessun commit ancora fatto.
+- Branch `master`; `.venv/` e `data/` (DB SQLite) sono esclusi da `.gitignore`.
 
 ## Modo di lavorare
 - Un passo alla volta, spiegare cosa si fa.
